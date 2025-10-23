@@ -3,9 +3,6 @@ import json
 import os
 
 
-# -------------------------------
-# DB CONNECTION CREATION
-# -------------------------------
 def create_connection():
     """Create and return a MySQL connection."""
     return mysql.connector.connect(
@@ -17,9 +14,7 @@ def create_connection():
     )
 
 
-# -------------------------------
-# SAVE JSON HELPER
-# -------------------------------
+
 def save_json(data, file_path):
     """Save data safely as JSON."""
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -30,9 +25,7 @@ def save_json(data, file_path):
         print(f"Error saving {file_path}: {e}")
 
 
-# -------------------------------
-# FETCH SEARCH DATA
-# -------------------------------
+
 def get_search_data(user_id: int, limit: int = 5):
     """Fetch search data for a specific user and save as JSON."""
     conn = create_connection()
@@ -62,9 +55,7 @@ def get_search_data(user_id: int, limit: int = 5):
     return data
 
 
-# -------------------------------
-# FETCH RECENT PURCHASE DATA
-# -------------------------------
+
 def get_recent_purchased(user_id: int, limit: int = 5):
     """Fetch purchase data for a specific user and save as JSON."""
     conn = create_connection()
@@ -91,9 +82,7 @@ def get_recent_purchased(user_id: int, limit: int = 5):
     return data
 
 
-# -------------------------------
-# TEST (remove or comment later)
-# -------------------------------
+
 if __name__ == "__main__":
     get_search_data(1)
     get_recent_purchased(1)
