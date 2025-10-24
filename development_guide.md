@@ -60,8 +60,8 @@ gunicorn main:app \
 export DB_HOST=127.0.0.1
 export DB_PORT=3306
 export DB_USER=root
-export DB_PASSWORD=Mayur@12
-export DB_NAME=searches
+export DB_PASSWORD=YOUR PASSWORD
+export DB_NAME=YOUR DB NAME 
 
 # Redis
 export REDIS_HOST=localhost
