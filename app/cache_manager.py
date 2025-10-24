@@ -1,37 +1,39 @@
 import json
 import os
 
-# -------------------------------
-# Load JSON safely
-# -------------------------------
 def load_json(file_path):
+    """
+    Load JSON data from a file. Returns an empty list if file is missing or error occurs.
+    """
+    if not os.path.exists(file_path):
+        print(f"⚠️ File not found: {file_path}")
+        return []
+
     try:
-        if not os.path.exists(file_path):
-            return None
         with open(file_path, 'r') as f:
             return json.load(f)
     except Exception as e:
-        print(f"Error loading {file_path}: {e}")
-        return None
+        print(f"❌ Error loading {file_path}: {e}")
+        return []
 
-# -------------------------------
-# Combine category viewed + purchases
-# -------------------------------
-def category_viewed(user_id):
-    # Per-user cache files
+
+def category_viewed(user_id: int):
+    """
+    Combine search and purchase cache for a user.
+    Returns None if both caches are missing.
+    """
     search_file = f"data/cache_searches_{user_id}.json"
     purchase_file = f"data/cache_purchase_{user_id}.json"
 
     data_s = load_json(search_file)
     data_p = load_json(purchase_file)
 
-    if not data_s or not data_p:
-        return None  # missing cache
+    # If both caches are empty, return None
+    if not data_s and not data_p:
+        return None
 
-    # Return combined dictionary
-    result = {
-    "category_viewed": [row["category"] for row in data_s],
-    "recently_purchased": [row["product_category"] for row in data_p]
-   }
-
-    return result
+    
+    return {
+        "search": data_s or [],
+        "purchase": data_p or []
+    }

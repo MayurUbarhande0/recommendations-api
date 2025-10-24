@@ -1,15 +1,17 @@
-from pydantic import BaseModel 
+from pydantic import BaseModel
+from typing import Optional
 
-class products(BaseModel):
-    product_id : int 
-    name : str
-    price : float 
-    category : str
-    unit  : int 
-    is_avaliable : bool
+class Product(BaseModel):
+    product_id: int
+    name: str
+    price: Optional[float] = None
+    category: Optional[str] = None
+    unit: Optional[int] = None
+    is_available: bool = True
 
-class user(BaseModel) :
-    id : int 
-    name : str
-    is_active  : bool
-    
+
+
+class User(BaseModel):
+    id: int
+    name:Optional[str] = None
+    is_active:Optional[bool]
