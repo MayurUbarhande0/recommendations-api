@@ -1,88 +1,59 @@
 import mysql.connector
 import json
+from datetime import datetime
 import os
 
+# -------------------------------
+# JSON serializer for datetime
+# -------------------------------
+def json_serial(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
 
-def create_connection():
-    """Create and return a MySQL connection."""
-    return mysql.connector.connect(
-        host="127.0.0.1",
-        user="root",
-        password="Mayur@12",   # change if needed
-        port=3306,
-        database="searches"    # change if different
-    )
+# -------------------------------
+# Connect to local MySQL server
+# -------------------------------
+conn = mysql.connector.connect(
+    host="127.0.0.1",
+    user="root",
+    password="Mayur@12",  # replace with your root password
+    port=3306,
+    database="searches"   # replace with your DB name
+)
 
+cursor = conn.cursor(dictionary=True)  # fetch results as dictionaries
 
-
-def save_json(data, file_path):
-    """Save data safely as JSON."""
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+# -------------------------------
+# Fetch search data for user
+# -------------------------------
+def get_search_data(user_id: int):
     try:
+        cursor.execute(f"SELECT * FROM searches WHERE id = {user_id} LIMIT 5")    
+        rows = cursor.fetchall()
+
+        os.makedirs("data", exist_ok=True)
+        file_path = f"data/cache_searches_{user_id}.json"
         with open(file_path, "w") as f:
-            json.dump(data, f, indent=4)
+            json.dump(rows, f, indent=4, default=json_serial)
+
+        print(f"✅ Search cache saved for user {user_id}")
     except Exception as e:
         print(f"Error saving {file_path}: {e}")
 
+# -------------------------------
+# Fetch purchase data for user
+# -------------------------------
+def get_recent_purchased(user_id: int):
+    try:
+        cursor.execute(f"SELECT * FROM purchase WHERE id = {user_id} LIMIT 5")    
+        rows = cursor.fetchall()
 
+        os.makedirs("data", exist_ok=True)
+        file_path = f"data/cache_purchase_{user_id}.json"
+        with open(file_path, "w") as f:
+            json.dump(rows, f, indent=4, default=json_serial)
 
-def get_search_data(user_id: int, limit: int = 5):
-    """Fetch search data for a specific user and save as JSON."""
-    conn = create_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    # Safe parameterized query
-    cursor.execute("SELECT * FROM searches WHERE id = %s LIMIT %s", (user_id, limit))
-    rows = cursor.fetchall()
-
-    # Transform into {column: [values]}
-    data = {}
-    if rows:
-        for col in rows[0].keys():
-            data[col] = [row[col] for row in rows]
-
-    # Add meta info
-    data["success"] = True
-    data["user_id"] = user_id
-
-    # Save JSON
-    save_json(data, f"data/cache_searches_{user_id}.json")
-
-    cursor.close()
-    conn.close()
-    print(f"Search cache saved for user {user_id}")
-
-    return data
-
-
-
-def get_recent_purchased(user_id: int, limit: int = 5):
-    """Fetch purchase data for a specific user and save as JSON."""
-    conn = create_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    cursor.execute("SELECT * FROM purchase WHERE id = %s LIMIT %s", (user_id, limit))
-    rows = cursor.fetchall()
-
-    # Transform into {column: [values]}
-    data = {}
-    if rows:
-        for col in rows[0].keys():
-            data[col] = [row[col] for row in rows]
-
-    data["success"] = True
-    data["user_id"] = user_id
-
-    save_json(data, f"data/cache_purchase_{user_id}.json")
-
-    cursor.close()
-    conn.close()
-    print(f"Purchase cache saved for user {user_id}")
-
-    return data
-
-
-
-if __name__ == "__main__":
-    get_search_data(1)
-    get_recent_purchased(1)
+        print(f"✅ Purchase cache saved for user {user_id}")
+    except Exception as e:
+        print(f"Error saving {file_path}: {e}")

@@ -30,7 +30,8 @@ def category_viewed(user_id):
 
     # Return combined dictionary
     result = {
-        "category_viewed": data_s.get("category", []),
-        "recently_purchased": data_p.get("purchased", [])
-    }
+    "category_viewed": [row["category"] for row in data_s],
+    "recently_purchased": [row["product_category"] for row in data_p]
+   }
+
     return result
