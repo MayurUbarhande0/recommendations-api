@@ -38,8 +38,8 @@ docker run -d -p 6379:6379 redis:7-alpine
 
 # 3. Start MySQL
 docker run -d -p 3306:3306 \
-  -e MYSQL_ROOT_PASSWORD=Mayur@12 \
-  -e MYSQL_DATABASE=searches \
+  -e MYSQL_ROOT_PASSWORD= YOUR PASSWORD \
+  -e MYSQL_DATABASE=NAME OF YOUR DB \
   mysql:8.0
 
 # 4. Run application
