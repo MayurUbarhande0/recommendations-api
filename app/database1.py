@@ -45,7 +45,7 @@ async def get_recent_purchased(user_id: int, pool):
     """
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute("SELECT * FROM purchases WHERE id = %s LIMIT 5", (user_id,))
+            await cursor.execute("SELECT * FROM purchase WHERE id = %s LIMIT 5", (user_id,))
             rows = await cursor.fetchall()
 
     os.makedirs("data", exist_ok=True)

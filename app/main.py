@@ -9,19 +9,15 @@ from datetime import timedelta
 import json
 import os
 
-# Import your modules
 from .cache_manager import category_viewed
 from .recommender1 import weightage_assigner
 from .database1 import get_search_data, get_recent_purchased
 
-# Global variables
 db_pool = None
 redis_client = None
 semaphore = None
 
-# -------------------------
 # Configuration
-# -------------------------
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "127.0.0.1"),
     "port": int(os.getenv("DB_PORT", 3306)),
@@ -44,9 +40,7 @@ REDIS_CONFIG = {
 # Cache TTL in seconds
 CACHE_TTL = 3600  # 1 hour
 
-# -------------------------
 # Lifespan context manager
-# -------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global db_pool, redis_client, semaphore
@@ -315,11 +309,11 @@ async def batch_recommendations(user_ids: str):
                 detail="Maximum 50 users per batch request"
             )
         
-        # Fetch all recommendations concurrently
+        
         tasks = [get_recommendation(uid, BackgroundTasks()) for uid in ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Process results
+        
         successful = []
         failed = []
         for uid, result in zip(ids, results):
@@ -340,9 +334,3 @@ async def batch_recommendations(user_ids: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# -------------------------
-# Run with:
-# gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120 --worker-connections 1000
-# Or for development:
-# uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
-# -------------------------

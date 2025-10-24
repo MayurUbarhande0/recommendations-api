@@ -55,4 +55,14 @@ def weightage_assigner(result: dict, user_id: int):
         json.dump(result_data, f, indent=4)
 
     print(f"✅ Weightage file created for user {user_id}: {weight_file}")
+    for fname in (f"data/cache_purchase_{user_id}.json", f"data/cache_searches_{user_id}.json"):
+        try:
+            os.remove(fname)
+        except FileNotFoundError:
+            # file already removed or never created; ignore
+            pass
+        except OSError as e:
+            # log other errors but continue
+            print(f"⚠️ Could not delete {fname}: {e}")
+
     return result_data
