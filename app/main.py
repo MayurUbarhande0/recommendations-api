@@ -29,7 +29,7 @@ DB_CONFIG = {
     "host": os.getenv("DB_HOST", "127.0.0.1"),
     "port": int(os.getenv("DB_PORT", 3306)),
     "user": os.getenv("DB_USER", "root"),
-    "password": os.getenv("DB_PASSWORD", "Mayur@12"),
+    "password": os.getenv("DB_PASSWORD", ""),
     "db": os.getenv("DB_NAME", "searches"),
     "minsize": 20,
     "maxsize": 80,
@@ -64,6 +64,10 @@ async def lifespan(app: FastAPI):
     global db_pool, redis_client, semaphore, thread_pool
 
     print("🚀 Starting API...")
+
+    if not DB_CONFIG.get("password"):
+        print("❌ Database password not set. Please set the DB_PASSWORD environment variable.")
+        raise ValueError("DB_PASSWORD environment variable is required")
 
     try:
         db_pool = await aiomysql.create_pool(**DB_CONFIG)
