@@ -2,3 +2,6 @@ data
 recommender
 test.py
 app/setup.sh
+__pycache__
+*.pyc
+*.pyo
