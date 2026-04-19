@@ -309,6 +309,39 @@ def process_weightage(combined_data: dict, user_id: int) -> dict:
     return weightage_assigner(combined_data, user_id)
 
 
+def _engagement_level(overall_weight: float) -> str:
+    if overall_weight > 50:
+        return "high"
+    elif overall_weight > 20:
+        return "medium"
+    elif overall_weight > 0:
+        return "low"
+    return "none"
+
+
+def _purchase_intent(search_count: int, purchase_count: int) -> str:
+    if search_count == 0:
+        return "unknown"
+    ratio = purchase_count / search_count
+    if ratio > 0.5:
+        return "high"
+    elif ratio > 0.2:
+        return "medium"
+    return "low"
+
+
+def _user_segment(search_count: int, purchase_count: int) -> str:
+    if purchase_count > 10:
+        return "power_buyer"
+    elif purchase_count > 5:
+        return "regular_buyer"
+    elif search_count > 20:
+        return "browser"
+    elif search_count > 5:
+        return "casual_browser"
+    return "new_user"
+
+
 async def compute_recommendation(user_id: int) -> dict:
     cache_key = f"recommendation:{user_id}"
     
@@ -350,24 +383,34 @@ async def compute_recommendation(user_id: int) -> dict:
 
         category_scores = weightage_result.get("category_scores", {})
 
-        # Build recommended_categories ranked by score (frequent/repeated interactions)
-        repeat_cats = list(dict.fromkeys(
-            weightage_result.get("search_category_duplicates", []) +
-            weightage_result.get("purchase_category_duplicates", [])
-        ))
-        recommended_categories = sorted(
-            repeat_cats,
-            key=lambda c: category_scores.get(c, 0),
-            reverse=True
-        )[:10]
+        # recommended_categories: top categories by time-decayed combined score.
+        # Using top_categories (already sorted by score) captures both high-frequency
+        # AND recently-active categories, even if only interacted with once.
+        recommended_categories = [
+            item["category"] for item in weightage_result.get("top_categories", [])
+        ][:10]
 
-        # Build explore_categories: unique (first-time) categories not already in recommended
+        # explore_categories: categories the user searched but has never purchased.
+        # These are conversion opportunities — the user has expressed intent but
+        # hasn't committed yet.  Re-sorted by combined score after deduplication
+        # so the ordering is stable regardless of concatenation order.
         recommended_set = set(recommended_categories)
-        explore_pool = list(dict.fromkeys(
-            weightage_result.get("search_category_unique", []) +
-            weightage_result.get("purchase_category_unique", [])
-        ))
-        explore_categories = [c for c in explore_pool if c not in recommended_set][:5]
+        purchased_cats = set(
+            weightage_result.get("purchase_category_unique", []) +
+            weightage_result.get("purchase_category_duplicates", [])
+        )
+        search_not_purchased = sorted(
+            set(
+                weightage_result.get("search_category_duplicates", []) +
+                weightage_result.get("search_category_unique", [])
+            ),
+            key=lambda c: category_scores.get(c, 0),
+            reverse=True,
+        )
+        explore_categories = [
+            c for c in search_not_purchased
+            if c not in purchased_cats and c not in recommended_set
+        ][:5]
 
         result = {
             "user_id": user_id,
@@ -376,7 +419,19 @@ async def compute_recommendation(user_id: int) -> dict:
                 "search_weight": weightage_result.get("weightage_search", 0),
                 "purchase_weight": weightage_result.get("weightage_purchase", 0),
                 "recommended_categories": recommended_categories,
-                "explore_categories": explore_categories
+                "explore_categories": explore_categories,
+                "top_categories": weightage_result.get("top_categories", []),
+                "user_profile": {
+                    "engagement_level": _engagement_level(weightage_result.get("overall_weight", 0)),
+                    "purchase_intent": _purchase_intent(
+                        weightage_result.get("search_count", 0),
+                        weightage_result.get("purchase_count", 0),
+                    ),
+                    "user_segment": _user_segment(
+                        weightage_result.get("search_count", 0),
+                        weightage_result.get("purchase_count", 0),
+                    ),
+                },
             },
             "metadata": {
                 "search_count": len(search_data),
@@ -402,7 +457,7 @@ async def health_check():
         "status": "healthy",
         "database": "connected" if db_pool else "disconnected",
         "redis": "connected" if redis_client else "disconnected",
-        "pool_size": f"{DB_CONFIG['minsize']}-{DB_CONFIG['maxsize']}",
+        "pool_size": f"{DB_CONFIG.get('minsize', '?')}-{DB_CONFIG.get('maxsize', '?')}",
         "memory_cache_size": len(memory_cache),
         "memory_cache_limit": MEMORY_CACHE_SIZE
     }

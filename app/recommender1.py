@@ -1,101 +1,154 @@
 import json
+import math
 import os
-from typing import Dict, List, Tuple
-from collections import Counter
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
+from collections import defaultdict
 import asyncio
 
 
+# ── Scoring constants ────────────────────────────────────────────────────────
+# Searches decay faster (intent is more fleeting); purchases decay slower.
+SEARCH_BASE_WEIGHT: float = 1.0
+SEARCH_DECAY_RATE: float = math.log(2) / 7   # exact 7-day half-life  ≈ 0.0990
+PURCHASE_BASE_WEIGHT: float = 3.0
+PURCHASE_DECAY_RATE: float = math.log(2) / 14  # exact 14-day half-life ≈ 0.0495
+# Age assumed when a timestamp is missing
+DEFAULT_DAYS_OLD: float = 30.0
+
+
+def _time_decay_score(timestamp_str: Optional[str], base_weight: float, decay_rate: float) -> float:
+    """Return base_weight × e^(−decay_rate × days_old).
+
+    Falls back to DEFAULT_DAYS_OLD when the timestamp is absent or unparseable,
+    so the interaction still contributes a small positive score rather than being
+    silently dropped.
+    """
+    days_old = DEFAULT_DAYS_OLD
+    if timestamp_str:
+        try:
+            dt = datetime.fromisoformat(timestamp_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            days_old = max(0.0, (now - dt).total_seconds() / 86400)
+        except (ValueError, TypeError):
+            pass
+    return base_weight * math.exp(-decay_rate * days_old)
+
+
 def weightage_assigner(result: dict, user_id: int) -> Dict:
+    """Calculate time-decayed category scores for a user.
+
+    Each interaction is scored as::
+
+        score = base_weight × e^(−decay_rate × days_since_interaction)
+
+    Purchases use a 3× higher base weight and a slower decay (intent lasts
+    longer) compared to searches.  Per-category scores are the sum of all
+    matching interaction scores, so both recency and frequency are naturally
+    captured.
+
+    Returns a dict with the same keys consumed by ``compute_recommendation``
+    in main.py plus richer profiling fields.
     """
-    Calculates weightage scores for a user's activity
-    based on their viewed and purchased categories.
-    
-    Enhanced version with better scoring algorithm and category analysis.
-    """
-    
-    # Extract categories from search and purchase data
-    category_list = [item.get("category", "") for item in result.get("search", []) if item.get("category")]
-    product_list = [item.get("product_category", "") for item in result.get("purchase", []) if item.get("product_category")]
-    
-    # Handle empty data
-    if not category_list and not product_list:
-        return {
-            "user_id": user_id,
-            "weightage_search": 0,
-            "weightage_purchase": 0,
-            "overall_weight": 0,
-            "search_category_unique": [],
-            "search_category_duplicates": [],
-            "purchase_category_unique": [],
-            "purchase_category_duplicates": [],
-            "top_categories": [],
-            "category_scores": {}
-        }
-    
-    # Calculate search weightage
-    duplicate_searches = len(category_list) - len(set(category_list))
-    unique_searches = len(set(category_list))
-    weightage_search = duplicate_searches * 2 + (unique_searches / 10)
-    
-    # Calculate purchase weightage (purchases are more valuable)
-    duplicate_purchases = len(product_list) - len(set(product_list))
-    unique_purchases = len(set(product_list))
-    weightage_purchase = duplicate_purchases * 3 + (unique_purchases / 10)  # Higher weight
-    
-    total_weight = round(weightage_search + weightage_purchase, 2)
-    
-    # Build unique and duplicate lists
-    def split_unique_duplicates(lst: List[str]) -> Tuple[List[str], List[str]]:
-        """Split list into unique and duplicate items"""
-        unique = []
-        duplicates = []
-        seen = set()
-        
-        for item in lst:
-            if item not in seen:
-                unique.append(item)
-                seen.add(item)
-            else:
-                duplicates.append(item)
-        
-        return unique, duplicates
-    
-    unique_categories, duplicate_categories = split_unique_duplicates(category_list)
-    unique_products, duplicate_products = split_unique_duplicates(product_list)
-    
-    # Calculate category scores (frequency-based)
-    all_categories = category_list + product_list
-    category_counter = Counter(all_categories)
-    
-    # Score each category (purchases count more)
-    category_scores = {}
-    for category in set(all_categories):
-        search_count = category_list.count(category)
-        purchase_count = product_list.count(category)
-        # Purchases weighted 3x more than searches
-        score = (search_count * 1.0) + (purchase_count * 3.0)
-        category_scores[category] = round(score, 2)
-    
-    # Get top categories by score
-    top_categories = sorted(category_scores.items(), key=lambda x: x[1], reverse=True)[:10]
-    
-    result_data = {
+    search_items = result.get("search", [])
+    purchase_items = result.get("purchase", [])
+
+    empty = {
         "user_id": user_id,
-        "weightage_search": round(weightage_search, 2),
-        "weightage_purchase": round(weightage_purchase, 2),
-        "overall_weight": total_weight,
-        "search_category_unique": unique_categories,
-        "search_category_duplicates": duplicate_categories,
-        "purchase_category_unique": unique_products,
-        "purchase_category_duplicates": duplicate_products,
-        "top_categories": [{"category": cat, "score": score} for cat, score in top_categories],
-        "category_scores": category_scores,
-        "total_interactions": len(category_list) + len(product_list),
-        "search_count": len(category_list),
-        "purchase_count": len(product_list)
+        "weightage_search": 0,
+        "weightage_purchase": 0,
+        "overall_weight": 0,
+        "search_category_unique": [],
+        "search_category_duplicates": [],
+        "purchase_category_unique": [],
+        "purchase_category_duplicates": [],
+        "top_categories": [],
+        "category_scores": {},
+        "total_interactions": 0,
+        "search_count": 0,
+        "purchase_count": 0,
     }
-    
-    return result_data
+
+    if not search_items and not purchase_items:
+        return empty
+
+    # ── Accumulate per-category scores in a single O(n) pass ─────────────────
+    search_scores: Dict[str, float] = defaultdict(float)
+    search_counts: Dict[str, int] = defaultdict(int)
+    purchase_scores: Dict[str, float] = defaultdict(float)
+    purchase_counts: Dict[str, int] = defaultdict(int)
+
+    total_search_score = 0.0
+    for item in search_items:
+        cat = item.get("category", "")
+        if not cat:
+            continue
+        s = _time_decay_score(item.get("searched_at"), SEARCH_BASE_WEIGHT, SEARCH_DECAY_RATE)
+        search_scores[cat] += s
+        search_counts[cat] += 1
+        total_search_score += s
+
+    total_purchase_score = 0.0
+    for item in purchase_items:
+        cat = item.get("product_category", "")
+        if not cat:
+            continue
+        s = _time_decay_score(item.get("purchased_at"), PURCHASE_BASE_WEIGHT, PURCHASE_DECAY_RATE)
+        purchase_scores[cat] += s
+        purchase_counts[cat] += 1
+        total_purchase_score += s
+
+    # Combined score per category
+    all_cats = set(search_scores) | set(purchase_scores)
+    category_scores = {
+        cat: round(search_scores.get(cat, 0.0) + purchase_scores.get(cat, 0.0), 4)
+        for cat in all_cats
+    }
+
+    # ── Unique (seen once) vs repeated (seen more than once) per source ───────
+    # "Repeated" categories signal strong, consistent interest.
+    # Sorted within each list by their time-decayed score (highest first).
+    search_repeated = sorted(
+        [c for c, n in search_counts.items() if n > 1],
+        key=lambda c: search_scores[c], reverse=True,
+    )
+    search_unique = sorted(
+        [c for c, n in search_counts.items() if n == 1],
+        key=lambda c: search_scores[c], reverse=True,
+    )
+    purchase_repeated = sorted(
+        [c for c, n in purchase_counts.items() if n > 1],
+        key=lambda c: purchase_scores[c], reverse=True,
+    )
+    purchase_unique = sorted(
+        [c for c, n in purchase_counts.items() if n == 1],
+        key=lambda c: purchase_scores[c], reverse=True,
+    )
+
+    # Top-10 categories by combined time-decayed score
+    top_categories = sorted(
+        [{"category": cat, "score": score} for cat, score in category_scores.items()],
+        key=lambda x: x["score"],
+        reverse=True,
+    )[:10]
+
+    return {
+        "user_id": user_id,
+        "weightage_search": round(total_search_score, 4),
+        "weightage_purchase": round(total_purchase_score, 4),
+        "overall_weight": round(total_search_score + total_purchase_score, 4),
+        "search_category_unique": search_unique,
+        "search_category_duplicates": search_repeated,
+        "purchase_category_unique": purchase_unique,
+        "purchase_category_duplicates": purchase_repeated,
+        "top_categories": top_categories,
+        "category_scores": category_scores,
+        "total_interactions": len(search_items) + len(purchase_items),
+        "search_count": len(search_items),
+        "purchase_count": len(purchase_items),
+    }
 
 
 def save_weightage_cache(result_data: Dict, user_id: int) -> bool:
