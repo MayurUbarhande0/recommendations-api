@@ -13,5 +13,5 @@ class Product(BaseModel):
 
 class User(BaseModel):
     id: int
-    name:Optional[str] = None
-    is_active:Optional[bool]
+    name: Optional[str] = None
+    is_active: Optional[bool] = True

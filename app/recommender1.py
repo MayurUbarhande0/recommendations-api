@@ -119,7 +119,7 @@ async def async_weightage_assigner(result: dict, user_id: int) -> Dict:
     """
     Async version of weightage calculator
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, weightage_assigner, result, user_id)
 
 

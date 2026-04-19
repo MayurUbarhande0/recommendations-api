@@ -5,7 +5,7 @@ from typing import Optional, Dict, List
 def load_json(file_path: str) -> List[dict]:
     """
     Load JSON data from a file. Returns an empty list if file is missing or error occurs.
-    Converts BIT/TINYINT(1) values to Python bool.
+    Converts BIT/TINYINT(1) SUCCESS fields to Python bool.
     """
     if not os.path.exists(file_path):
         print(f"⚠️ File not found: {file_path}")
@@ -14,11 +14,10 @@ def load_json(file_path: str) -> List[dict]:
     try:
         with open(file_path, 'r') as f:
             data = json.load(f)
-        # Convert any BIT/TINYINT fields to bool automatically
+        # Only convert fields that are semantically boolean (SUCCESS flag)
         for entry in data:
-            for key, value in entry.items():
-                if value in (0, 1):
-                    entry[key] = bool(value)
+            if "SUCCESS" in entry and entry["SUCCESS"] in (0, 1):
+                entry["SUCCESS"] = bool(entry["SUCCESS"])
         return data
     except Exception as e:
         print(f"❌ Error loading {file_path}: {e}")

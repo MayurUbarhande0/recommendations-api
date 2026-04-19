@@ -289,7 +289,7 @@ async def fetch_purchase_data(user_id: int) -> List[Dict]:
 def run_in_thread(func):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             return await asyncio.wait_for(
                 loop.run_in_executor(
@@ -348,20 +348,35 @@ async def compute_recommendation(user_id: int) -> dict:
                 "recommendations": []
             }
 
+        category_scores = weightage_result.get("category_scores", {})
+
+        # Build recommended_categories ranked by score (frequent/repeated interactions)
+        repeat_cats = list(dict.fromkeys(
+            weightage_result.get("search_category_duplicates", []) +
+            weightage_result.get("purchase_category_duplicates", [])
+        ))
+        recommended_categories = sorted(
+            repeat_cats,
+            key=lambda c: category_scores.get(c, 0),
+            reverse=True
+        )[:10]
+
+        # Build explore_categories: unique (first-time) categories not already in recommended
+        recommended_set = set(recommended_categories)
+        explore_pool = list(dict.fromkeys(
+            weightage_result.get("search_category_unique", []) +
+            weightage_result.get("purchase_category_unique", [])
+        ))
+        explore_categories = [c for c in explore_pool if c not in recommended_set][:5]
+
         result = {
             "user_id": user_id,
             "recommendations": {
                 "weightage": weightage_result.get("overall_weight", 0),
                 "search_weight": weightage_result.get("weightage_search", 0),
                 "purchase_weight": weightage_result.get("weightage_purchase", 0),
-                "recommended_categories": list(set(
-                    weightage_result.get("search_category_duplicates", []) +
-                    weightage_result.get("purchase_category_duplicates", [])
-                ))[:10],
-                "explore_categories": list(set(
-                    weightage_result.get("search_category_unique", []) +
-                    weightage_result.get("purchase_category_unique", [])
-                ))[:5]
+                "recommended_categories": recommended_categories,
+                "explore_categories": explore_categories
             },
             "metadata": {
                 "search_count": len(search_data),
@@ -387,6 +402,7 @@ async def health_check():
         "status": "healthy",
         "database": "connected" if db_pool else "disconnected",
         "redis": "connected" if redis_client else "disconnected",
+        "pool_size": f"{DB_CONFIG['minsize']}-{DB_CONFIG['maxsize']}",
         "memory_cache_size": len(memory_cache),
         "memory_cache_limit": MEMORY_CACHE_SIZE
     }
@@ -394,15 +410,28 @@ async def health_check():
 
 @app.get("/recommend/{user_id}")
 async def get_recommendation(user_id: int):
+    if user_id <= 0:
+        raise HTTPException(status_code=422, detail="user_id must be a positive integer")
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database not available")
+
+    cache_key = f"recommendation:{user_id}"
+
+    # Check cache first to set the header accurately and avoid a redundant lookup
+    cached_result = await get_from_cache(cache_key)
+    if cached_result is not None:
+        response = JSONResponse(content=cached_result)
+        response.headers["X-Cache"] = "HIT"
+        return response
 
     try:
         result = await asyncio.wait_for(
             compute_recommendation(user_id),
             timeout=REQUEST_TIMEOUT
         )
-        return JSONResponse(content=result)
+        response = JSONResponse(content=result)
+        response.headers["X-Cache"] = "MISS"
+        return response
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Request timeout")
     except Exception as e:
