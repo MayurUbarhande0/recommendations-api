@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+aiomysql
+redis[asyncio]
+aiohttp
+locust
+numpy>=2.0
+scikit-learn>=1.4

@@ -145,6 +145,10 @@ def weightage_assigner(result: dict, user_id: int) -> Dict:
         "purchase_category_duplicates": purchase_repeated,
         "top_categories": top_categories,
         "category_scores": category_scores,
+        # Separate per-source score maps — used by ml_engine for purchase
+        # probability estimation and archetype classification.
+        "search_category_scores": dict(search_scores),
+        "purchase_category_scores": dict(purchase_scores),
         "total_interactions": len(search_items) + len(purchase_items),
         "search_count": len(search_items),
         "purchase_count": len(purchase_items),

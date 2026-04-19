@@ -14,6 +14,8 @@ import time
 from .cache_manager import category_viewed
 from .recommender1 import weightage_assigner
 from .database1 import get_search_data, get_recent_purchased
+from .ml_engine import extract_user_features, classify_archetype, estimate_purchase_probabilities
+from .models import RecommendationResponse
 
 
 db_pool: Optional[aiomysql.Pool] = None
@@ -342,12 +344,13 @@ def _user_segment(search_count: int, purchase_count: int) -> str:
     return "new_user"
 
 
-async def compute_recommendation(user_id: int) -> dict:
+async def compute_recommendation(user_id: int, _skip_cache: bool = False) -> dict:
     cache_key = f"recommendation:{user_id}"
-    
-    cached = await get_from_cache(cache_key)
-    if cached is not None:
-        return cached
+
+    if not _skip_cache:
+        cached = await get_from_cache(cache_key)
+        if cached is not None:
+            return cached
 
     try:
         search_data, purchase_data = await asyncio.gather(
@@ -383,6 +386,19 @@ async def compute_recommendation(user_id: int) -> dict:
 
         category_scores = weightage_result.get("category_scores", {})
 
+        # ── ML step 1: extract feature vector ────────────────────────────────
+        features = extract_user_features(weightage_result)
+
+        # ── ML step 2: classify behavioural archetype ─────────────────────────
+        archetype_result = classify_archetype(features)
+
+        # ── ML step 3: purchase probability per explore candidate ─────────────
+        search_cat_scores = weightage_result.get("search_category_scores", {})
+        purchase_cat_scores = weightage_result.get("purchase_category_scores", {})
+        purchase_probs = estimate_purchase_probabilities(
+            search_cat_scores, purchase_cat_scores, features["conversion_rate"]
+        )
+
         # recommended_categories: top categories by time-decayed combined score.
         # Using top_categories (already sorted by score) captures both high-frequency
         # AND recently-active categories, even if only interacted with once.
@@ -390,27 +406,20 @@ async def compute_recommendation(user_id: int) -> dict:
             item["category"] for item in weightage_result.get("top_categories", [])
         ][:10]
 
-        # explore_categories: categories the user searched but has never purchased.
+        # explore_categories: categories the user searched but has never purchased,
+        # now ranked by ML-estimated purchase probability instead of raw score.
         # These are conversion opportunities — the user has expressed intent but
-        # hasn't committed yet.  Re-sorted by combined score after deduplication
-        # so the ordering is stable regardless of concatenation order.
+        # hasn't committed yet.
         recommended_set = set(recommended_categories)
         purchased_cats = set(
             weightage_result.get("purchase_category_unique", []) +
             weightage_result.get("purchase_category_duplicates", [])
         )
-        search_not_purchased = sorted(
-            set(
-                weightage_result.get("search_category_duplicates", []) +
-                weightage_result.get("search_category_unique", [])
-            ),
-            key=lambda c: category_scores.get(c, 0),
-            reverse=True,
-        )
-        explore_categories = [
-            c for c in search_not_purchased
+        explore_candidates = [
+            c for c in purchase_probs  # already sorted by probability desc
             if c not in purchased_cats and c not in recommended_set
-        ][:5]
+        ]
+        explore_categories = explore_candidates[:5]
 
         result = {
             "user_id": user_id,
@@ -421,6 +430,7 @@ async def compute_recommendation(user_id: int) -> dict:
                 "recommended_categories": recommended_categories,
                 "explore_categories": explore_categories,
                 "top_categories": weightage_result.get("top_categories", []),
+                "purchase_probabilities": purchase_probs,
                 "user_profile": {
                     "engagement_level": _engagement_level(weightage_result.get("overall_weight", 0)),
                     "purchase_intent": _purchase_intent(
@@ -431,6 +441,9 @@ async def compute_recommendation(user_id: int) -> dict:
                         weightage_result.get("search_count", 0),
                         weightage_result.get("purchase_count", 0),
                     ),
+                    "archetype": archetype_result["archetype"],
+                    "archetype_confidence": archetype_result["confidence"],
+                    "features": features,
                 },
             },
             "metadata": {
@@ -463,16 +476,18 @@ async def health_check():
     }
 
 
-@app.get("/recommend/{user_id}")
+@app.get("/recommend/{user_id}", response_model=RecommendationResponse)
 async def get_recommendation(user_id: int):
     if user_id <= 0:
-        raise HTTPException(status_code=422, detail="user_id must be a positive integer")
+        raise HTTPException(status_code=422, detail="user_id must be greater than zero")
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database not available")
 
     cache_key = f"recommendation:{user_id}"
 
-    # Check cache first to set the header accurately and avoid a redundant lookup
+    # Single cache read: if it's a HIT return immediately with the header;
+    # if it's a MISS call compute_recommendation with _skip_cache=True so the
+    # inner function doesn't do a second (now-redundant) lookup.
     cached_result = await get_from_cache(cache_key)
     if cached_result is not None:
         response = JSONResponse(content=cached_result)
@@ -481,7 +496,7 @@ async def get_recommendation(user_id: int):
 
     try:
         result = await asyncio.wait_for(
-            compute_recommendation(user_id),
+            compute_recommendation(user_id, _skip_cache=True),
             timeout=REQUEST_TIMEOUT
         )
         response = JSONResponse(content=result)
